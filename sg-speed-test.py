@@ -61,7 +61,7 @@ def upload(pipe, pipe_v, folder, target):
     pipe_v.send('DONE')
 
 def write_report(report):
-    with open('output.csv', 'w') as csvfile:
+    with open('report.csv', 'w') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['File', 'Size in Bytes', 'S3 Latency in Ms'])
         for k in report.keys():
