@@ -44,16 +44,20 @@ def verify(pipe, pipe_u, bucket):
     pipe.send('DONE')
 
 
-def copy_file(source, target, pipe_v, pipe, relative_path):
-    copyfile(source, target)
-    end_time = datetime.datetime.now()
-    copy_time = end_time
-    size = os.path.getsize(source)
-    pipe_v.send(relative_path)
-    pipe.send([relative_path, size, end_time, copy_time])
+def copy_file(source, target, pipe_v, pipe, relative_path, thread_limiter):
+    thread_limiter.acquire()
+    try:
+        copyfile(source, target)
+        end_time = datetime.datetime.now()
+        copy_time = end_time
+        size = os.path.getsize(source)
+        pipe_v.send(relative_path)
+        pipe.send([relative_path, size, end_time, copy_time])
+    finally:
+        thread_limiter.release()
 
 
-def upload(pipe, pipe_v, folder, target):
+def upload(pipe, pipe_v, folder, target, thread_limiter):
     start = datetime.datetime.now()
     threads = []
     for root, dirs, files in os.walk(folder, topdown=True):
@@ -65,7 +69,8 @@ def upload(pipe, pipe_v, folder, target):
             if not os.path.isdir(target_folder):
                 os.makedirs(target_folder)
             copy_t = threading.Thread(target=copy_file,
-                                      args=(source_file, target_file, pipe_v, pipe, relative_path))
+                                      args=(source_file, target_file, pipe_v,
+                                            pipe, relative_path, thread_limiter))
             threads.append(copy_t)
             copy_t.start()
     for t in threads:
@@ -126,14 +131,16 @@ def report(upload_pipe, verify_pipe, start_time):
 @click.argument('source_path')
 @click.argument('target_path')
 @click.argument('storage_gateway_bucket_name')
+@click.option('--max_threads', default=100, help='Maximum number of threads')
 @click.option('--output_file', default='./report.csv', help='Output report file')
-def main(source_path, target_path, storage_gateway_bucket_name, output_file):
+def main(source_path, target_path, storage_gateway_bucket_name, output_file, max_threads):
+    thread_limiter = threading.BoundedSemaphore(max_threads)
     start = datetime.datetime.now()
     upload_pipe_v, verify_pipe_v = Pipe()
     verify_pipe, report_v_pipe = Pipe()
     upload_pipe, report_u_pipe = Pipe()
 
-    upload_p = Process(target=upload, args=(upload_pipe, upload_pipe_v, source_path, target_path))
+    upload_p = Process(target=upload, args=(upload_pipe, upload_pipe_v, source_path, target_path, thread_limiter))
     verify_p = Process(target=verify, args=(verify_pipe, verify_pipe_v, storage_gateway_bucket_name))
     report_p = Process(target=report, args=(report_u_pipe, report_v_pipe, start))
 
